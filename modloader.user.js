@@ -3,11 +3,11 @@
 // ==UserScript==
 // @name         HCP ModLoader
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
+// @version      1.3
 // @match        *://hypercubesplanet.web.app/
 // @run-at       document-start
-// @updateURL    https://ximi.ovh/mods/HCP/modloader.user.js
-// @downloadURL  https://ximi.ovh/mods/HCP/modloader.user.js
+// @updateURL    https://raw.githubusercontent.com/ximi-ovh/HML/main/modloader.user.js
+// @downloadURL  https://raw.githubusercontent.com/ximi-ovh/HML/main/modloader.user.js
 // @description  ModLoader for HyperCubesPlanet - easily add and manage mods!
 // @author       Erdef @ Ximi.ovh
 // @license      GPL-3.0
@@ -22,7 +22,8 @@
 1.1 - cors fix and license notice
 1.2 - link change + changelog in file
 1.2.1 - corsproxy removal bc of ratelimit
-2.0 - complete rewrite with better UI and mod management system, also moved to github
+1.3 - trying to implement new UI, also moved to github for easier updates
+2.0 (incoming) - new UI, better mod management, and more features!
 
 */ // Changelog //
 
@@ -73,35 +74,52 @@ Nixox (his ai) - for making the game in the first place. (and lying about that t
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+const showWindow = true;
+
 (function() {
     'use strict';
 
-    const showWindow = true;
     const blockedPattern = /\/main\.js(\?.*)?$/;
 
-    // --- LOGIC: SCRIPT BLOCKING ---
     const observer = new MutationObserver(mutations => {
         mutations.forEach(mutation => {
             mutation.addedNodes.forEach(node => {
                 if (node.tagName === 'SCRIPT' && node.src && blockedPattern.test(node.src)) {
                     node.type = 'javascript/blocked';
                     node.parentElement?.removeChild(node);
-                    console.log(`%c[ModLoader] Blocked: ${node.src}`, 'color: red; font-weight: bold;');
+                    console.log(`%c[ModLoader Block] Blocked: ${node.src}`, 'color: red; font-weight: bold;');
                 }
             });
         });
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    // Monkey-patching appendChild/insertBefore
     const originalAppend = Element.prototype.appendChild;
     Element.prototype.appendChild = function(node) {
-        if (node.tagName === 'SCRIPT' && node.src && blockedPattern.test(node.src)) return node;
+        if (node.tagName === 'SCRIPT' && node.src && blockedPattern.test(node.src)) {
+            console.log(`%c[ModLoader Block] Blocked (appendChild): ${node.src}`, 'color: red; font-weight: bold;');
+            return node;
+        }
         return originalAppend.call(this, node);
     };
 
-    // --- MODLOADER CORE API ---
+    const originalInsert = Element.prototype.insertBefore;
+    Element.prototype.insertBefore = function(node, ref) {
+        if (node.tagName === 'SCRIPT' && node.src && blockedPattern.test(node.src)) {
+            console.log(`%c[ModLoader Block] Blocked (insertBefore): ${node.src}`, 'color: red; font-weight: bold;');
+            return node;
+        }
+        return originalInsert.call(this, node, ref);
+    };
+
+
     unsafeWindow.modloader = {
+        license: async () => {
+            return 'GPL-3.0';
+        },
+        printLicense: async () => {
+            console.log(`ModLoader for HyperCubesPlanet is licensed under GPL-3.0. See https://www.gnu.org/licenses/gpl-3.0.en.html for details.`);
+        },
         addMod: async (url) => {
             if (!url) return;
             const mods = await GM_getValue("userMods", []);
@@ -109,192 +127,160 @@ Nixox (his ai) - for making the game in the first place. (and lying about that t
                 const id = Date.now() + "_" + Math.floor(Math.random()*1000);
                 mods.push({ id, url, manifest: null });
                 await GM_setValue("userMods", mods);
-                renderModList();
+                alert(`Mod added!`);
+                //location.reload();
+            } else {
+                alert("This mod already exists in the loader!");
+            }
+        },
+        addModCORS: async (url) => {
+            if (!url) return;
+            url = `https://corsproxy.io/?url=${encodeURIComponent(url)}?v=${Date.now()}`;
+            const mods = await GM_getValue("userMods", []);
+            if (!mods.find(m => m.url === url)) {
+                const a = prompt("Mods added in CORS may not work because of ratelimits. Please get your web server to work with CORS. This function will be removed in the next update.\nPlease type in \"I understand\" in the box below to continue.");
+                if (a.toLowerCase() != "i understand") {
+                    return;
+                }
+                const id = Date.now() + "_" + Math.floor(Math.random()*1000);
+                mods.push({ id, url, manifest: null });
+                await GM_setValue("userMods", mods);
+                alert(`Mod added!`);
+                //location.reload();
+            } else {
+                alert("This mod already exists in the loader!");
             }
         },
         removeMod: async (id) => {
+            if (!id) return;
             let mods = await GM_getValue("userMods", []);
             mods = mods.filter(m => m.id !== id);
             await GM_setValue("userMods", mods);
-            renderModList();
+            alert(`Mod removed!`);
+            //location.reload();
         },
-        listMods: () => GM_getValue("userMods", []),
-        logMessage: (msg, type = 'log') => {
-            const styles = { log: 'background:#c5e1a5', warn: 'background:#fff59d', err: 'background:#ef9a9a' };
-            console.log(`%c ModLoader %c ${msg}`, 'color:#000;font-weight:bold;'+styles[type], 'color:#333');
+        listMods: async () => {
+            const mods = await GM_getValue("userMods", []);
+            return mods;
+        },
+        getModCount: async () => {
+            const mods = await GM_getValue("userMods", []);
+            return mods.length;
+        },
+        logMessage: (message, type = 'log', funcpar = "main") => {
+            if (message === null || message === undefined) return;
+            const style1 = 'background:#c5e1a5; color:#000; padding:2px 6px; border-radius:4px 0 0 4px; font-weight:bold;';
+            const style2 = 'background:#90caf9; color:#000; padding:2px 6px; border-radius:0 4px 4px 0; font-weight:bold;';
+            if (type === "log") console.log(`%c ModLoader %c ${funcpar}`, style1, style2, message);
+            else if (type === "warn") console.warn(`%c ModLoader %c ${funcpar}`, style1, style2, message);
+            else if (type === "err") console.error(`%c ModLoader %c ${funcpar}`, style1, style2, message);
         }
     };
 
-    // --- UI INJECTION ---
-    const injectUI = () => {
-        const style = document.createElement('style');
-        style.textContent = `
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
-            :root {
-                --window-bg: #1e1e1e; --sidebar-bg: #252525; --accent: #3b82f6; --danger: #e81123;
-                --text: #e0e0e0; --text-dim: #a0a0a0; --border: #333;
-            }
-            #hml-ui-root { font-family: 'Inter', sans-serif; z-index: 999999; position: fixed; pointer-events: none; top:0; left:0; width:100vw; height:100vh; }
-            .hml-window { 
-                position: absolute; width: 650px; height: 420px; background: var(--window-bg); 
-                border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column;
-                box-shadow: 0 20px 50px rgba(0,0,0,0.6); pointer-events: auto; user-select: none;
-                animation: hml-pop 0.3s cubic-bezier(0.17, 0.88, 0.32, 1.27);
-            }
-            .hml-dragbar { height: 40px; background: var(--sidebar-bg); cursor: move; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); border-radius: 12px 12px 0 0; }
-            .hml-title { padding-left: 15px; font-weight: 600; font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
-            .hml-close { width: 45px; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; border-radius: 0 12px 0 0; }
-            .hml-close:hover { background: var(--danger); color: white; }
-            .hml-content { display: flex; flex: 1; overflow: hidden; }
-            .hml-sidebar { width: 160px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 15px 10px; gap: 5px; }
-            .hml-opt { padding: 10px 15px; border-radius: 8px; cursor: pointer; color: var(--text-dim); font-size: 13px; transition: 0.2s; }
-            .hml-opt:hover { background: rgba(255,255,255,0.05); color: var(--text); }
-            .hml-opt.active { background: var(--accent); color: white; }
-            .hml-main { flex: 1; padding: 20px; color: var(--text); overflow-y: auto; }
-            .hml-hidden { display: none !important; }
-            
-            /* Inputs & Buttons */
-            .hml-input { background: #121212; border: 1px solid var(--border); color: white; padding: 8px 12px; border-radius: 6px; width: calc(100% - 26px); margin-bottom: 10px; }
-            .hml-btn { background: var(--accent); color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: 0.2s; }
-            .hml-btn:hover { filter: brightness(1.2); }
-            .mod-item { background: #2a2a2a; padding: 10px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); }
-            .mod-info { display: flex; flex-direction: column; gap: 2px; }
-            .mod-name { font-weight: 600; font-size: 13px; }
-            .mod-meta { font-size: 11px; color: var(--text-dim); }
-            .btn-rm { background: transparent; color: #ff5252; border: 1px solid #ff5252; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-            .btn-rm:hover { background: #ff5252; color: white; }
-
-            @keyframes hml-pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        `;
-        document.head.appendChild(style);
-
-        const container = document.createElement('div');
-        container.id = 'hml-ui-root';
-        container.innerHTML = `
-            <div class="hml-window" id="hml-window" style="top: 100px; left: 100px;">
-                <div class="hml-dragbar" id="hml-drag">
-                    <div class="hml-title">HCP MODLOADER</div>
-                    <div class="hml-close" id="hml-close-btn">✕</div>
-                </div>
-                <div class="hml-content">
-                    <div class="hml-sidebar">
-                        <div class="hml-opt active" data-page="home">Dashboard</div>
-                        <div class="hml-opt" data-page="mods">Manage Mods</div>
-                        <div class="hml-opt" data-page="options">Settings</div>
-                        <div style="margin-top:auto">
-                            <button class="hml-btn" style="width:100%; background:#10b981" onclick="location.reload()">Reload Game</button>
-                        </div>
-                    </div>
-                    <div class="hml-main" id="hml-main-view"></div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(container);
-        setupUI();
-    };
-
-    // --- UI LOGIC ---
-    function setupUI() {
-        const wndw = document.getElementById('hml-window');
-        const drag = document.getElementById('hml-drag');
-        const main = document.getElementById('hml-main-view');
-        const opts = document.querySelectorAll('.hml-opt');
-
-        // Dragging
-        let isMoving = false, px, py;
-        drag.onmousedown = (e) => {
-            if (e.target.id !== 'hml-drag') return;
-            isMoving = true; px = e.clientX - wndw.offsetLeft; py = e.clientY - wndw.offsetTop;
-        };
-        document.onmousemove = (e) => { if(isMoving) { wndw.style.left = (e.clientX - px) + 'px'; wndw.style.top = (e.clientY - py) + 'px'; } };
-        document.onmouseup = () => isMoving = false;
-
-        // Routing
-        const pages = {
-            home: `<h2>Status</h2><p>ModLoader is active.</p><p>Detected mods: <b>${GM_getValue("userMods", []).length}</b></p>`,
-            mods: `<h2>Mods Manager</h2>
-                   <input type="text" class="hml-input" id="new-mod-url" placeholder="https://site.com/mod.js">
-                   <div style="display:flex; gap:10px; margin-bottom:20px;">
-                       <button class="hml-btn" id="add-mod-action">Add Mod</button>
-                   </div>
-                   <div id="mod-list-container"></div>`,
-            options: `<h2>Settings</h2><p>No extra settings available yet.</p>`
-        };
-
-        const renderPage = (name) => {
-            main.innerHTML = pages[name];
-            if(name === 'mods') {
-                renderModList();
-                document.getElementById('add-mod-action').onclick = () => {
-                    const url = document.getElementById('new-mod-url').value;
-                    unsafeWindow.modloader.addMod(url);
-                    document.getElementById('new-mod-url').value = '';
-                };
-            }
-        };
-
-        opts.forEach(o => o.onclick = () => {
-            opts.forEach(x => x.classList.remove('active'));
-            o.classList.add('active');
-            renderPage(o.dataset.page);
-        });
-
-        document.getElementById('hml-close-btn').onclick = () => wndw.classList.toggle('hml-hidden');
-        document.addEventListener('keydown', (e) => { if(e.key === 'F1') { e.preventDefault(); wndw.classList.toggle('hml-hidden'); } });
-
-        renderPage('home');
-    }
-
-    async function renderModList() {
-        const container = document.getElementById('mod-list-container');
-        if(!container) return;
-        const mods = await GM_getValue("userMods", []);
-        container.innerHTML = mods.length ? '' : '<p style="color:var(--text-dim)">No mods installed.</p>';
-        mods.forEach(mod => {
-            const div = document.createElement('div');
-            div.className = 'mod-item';
-            div.innerHTML = `
-                <div class="mod-info">
-                    <span class="mod-name">${mod.manifest?.name || 'Unknown Mod'}</span>
-                    <span class="mod-meta">${mod.url.substring(0, 40)}...</span>
-                </div>
-                <button class="btn-rm" data-id="${mod.id}">Remove</button>
-            `;
-            div.querySelector('.btn-rm').onclick = () => unsafeWindow.modloader.removeMod(mod.id);
-            container.appendChild(div);
-        });
-    }
-
-    // --- MOD LOADING LOGIC ---
-    async function loadScript(url, modId) {
+    async function loadScript(url, modObj) {
         try {
             const res = await fetch(url);
             const code = await res.text();
             const s = document.createElement('script');
             s.type = 'module';
-            s.textContent = `${code}\nif(typeof modManifest!=='undefined')unsafeWindow.modloader._updateManifest('${modId}',modManifest);`;
+            s.textContent = `
+                ${code}
+                if (typeof modManifest !== 'undefined') {
+                    window.modloader.logMessage('Loaded mod: ' + modManifest.name + ' author: ' + modManifest.author, 'log', 'ModLoader');
+                    window.modloader._updateModManifest && window.modloader._updateModManifest('${modObj.id}', modManifest);
+                }
+            `;
             document.documentElement.appendChild(s);
-        } catch (e) { console.error("Failed to load mod", url); }
+        } catch (e) {
+            window.modloader.logMessage(`Error loading mod: ${url}`, 'err', 'ModLoader');
+        }
     }
 
-    unsafeWindow.modloader._updateManifest = async (id, manifest) => {
+    unsafeWindow.modloader._updateModManifest = async (id, manifest) => {
         let mods = await GM_getValue("userMods", []);
-        const m = mods.find(x => x.id === id);
-        if(m) { m.manifest = manifest; await GM_setValue("userMods", mods); }
+        const mod = mods.find(m => m.id === id);
+        if (mod) {
+            mod.manifest = manifest;
+            await GM_setValue("userMods", mods);
+            renderList();
+        }
     };
 
-    // --- INIT ---
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            if(showWindow) injectUI();
-        });
-    } else {
-        if(showWindow) injectUI();
+    async function loadMods() {
+        await loadScript(`https://raw.githubusercontent.com/ximi-ovh/HML/main/main.js`, { id: "core" });
+
+        const mods = await GM_getValue("userMods", []);
+        for (const mod of mods) {
+            await loadScript(mod.url, mod);
+        }
     }
 
-    (async () => {
-        const mods = await GM_getValue("userMods", []);
-        for(const m of mods) loadScript(m.url, m.id);
-    })();
+    // --- UI ---
+    const panel = document.createElement('div');
+    panel.id = 'modloader-panel';
+    const style = document.createElement('style');
+    style.textContent = `
+        #modloader-panel {
+            position: fixed; top: 20px; right: 20px; width: 350px; max-height: 500px; background: rgba(0,0,0,0.9);
+            color: white; font-family: sans-serif; padding: 15px; border-radius: 8px; box-shadow: 0 0 10px black; overflow-y: auto; z-index: 99999;
+        }
+        #modloader-panel h2 { margin: 0 0 10px 0; font-size: 16px; }
+        #modloader-panel input { width: 70%; margin-right: 5px; padding: 5px; border-radius: 3px; border: none; }
+        #modloader-panel button { padding: 5px 8px; border-radius: 3px; border: none; cursor: pointer; margin-top: 5px; }
+        #modloader-panel .mod-item { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        #modloader-panel .close-btn { position: absolute; top: 5px; right: 5px; cursor: pointer; font-weight: bold; }
+    `;
+    if (showWindow) document.head.appendChild(style);
+    panel.innerHTML = `
+        <div class="close-btn">X</div>
+        <h2>ModLoader UI</h2>
+        <div>
+            <input type="text" id="modloader-new-url" placeholder="Mod URL" /><br>
+            <button id="modloader-add-btn">Add mod</button><button id="modloader-add-cors-btn">Add mod (CORS)</button><button style="background:#0f0;" onclick="location.reload();">Apply changes</button>
+        </div>
+        <div id="modloader-list"></div>
+    `;
+    if (showWindow) document.body.appendChild(panel);
 
+    panel.querySelector('.close-btn').addEventListener('click', () => panel.style.display = 'none');
+
+    panel.querySelector('#modloader-add-btn').addEventListener('click', async () => {
+        const url = panel.querySelector('#modloader-new-url').value.trim();
+        if(url) await unsafeWindow.modloader.addMod(url);
+    });
+    panel.querySelector('#modloader-add-cors-btn').addEventListener('click', async () => {
+        const url = panel.querySelector('#modloader-new-url').value.trim();
+        if(url) await unsafeWindow.modloader.addModCORS(url);
+    });
+
+    async function renderList() {
+        if (!showWindow) return;
+        const listContainer = panel.querySelector('#modloader-list');
+        const mods = await unsafeWindow.modloader.listMods();
+        listContainer.innerHTML = '';
+        for (const mod of mods) {
+            const name = mod.manifest?.name || mod.url;
+            const author = mod.manifest?.author || '';
+            const item = document.createElement('div');
+            item.className = 'mod-item';
+            item.innerHTML = `
+                <span>${name}${author ? ' - ' + author : ''}</span>
+                <button data-id="${mod.id}" onClick="this.style.background='#f00';">Usuń</button>
+            `;
+            item.querySelector('button').addEventListener('click', async () => {
+                await unsafeWindow.modloader.removeMod(mod.id);
+            });
+            listContainer.appendChild(item);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        renderList();
+    });
+
+    loadMods().then(async () => {
+        const el = document.getElementById('game-version');
+        const count = await unsafeWindow.modloader.getModCount();
+        if(el) el.textContent += ` + ModLoader (${count} Mods)`;
+    });
 })();
